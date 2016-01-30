@@ -7,16 +7,94 @@ from tensorflow.models.rnn import rnn_cell
 from tensorflow.python.ops import array_ops
 
 
+class GFCell(object):
+    """Abstract object representing a cell in a Gated Feedback RNN
+    Operates like an RNNCell
+    """
+
+    def __init__(self, num_units):
+        self._num_units = num_units
+
+    @property
+    def input_size(self):
+        return self._num_units
+
+    @property
+    def output_size(self):
+        return self._num_units
+
+    @property
+    def state_size(self):
+        return self._num_units
+
+    def zero_state(self, batch_size, dtype):
+        """Return state tensor (shape [batch_size x state_size]) filled with 0.
+
+        Args:
+          batch_size: int, float, or unit Tensor representing the batch size.
+          dtype: the data type to use for the state.
+
+        Returns:
+          A 2D Tensor of shape [batch_size x state_size] filled with zeros.
+        """
+        zeros = array_ops.zeros(
+                array_ops.pack([batch_size, self.state_size]), dtype=dtype)
+        zeros.set_shape([None, self.state_size])
+        return zeros
+
+    def __call__(self, inputs, state, full_state, layer_sizes, scope=None):
+        raise NotImplementedError("Abstract method")
+
+    def compute_feedback(self, inputs, full_state, layer_sizes, scope=None):
+        with tf.variable_scope("Global Reset"):
+            cur_state_pos = 0
+            full_state_size = sum(layer_sizes)
+            summation_term = tf.get_variable("summation", self.state_size, initializer=tf.constant_initializer())
+            for i, layer_size in enumerate(layer_sizes):
+                with tf.variable_scope("Cell%d" % i):
+                    # Compute global reset gate
+                    w_g = tf.get_variable("w_g", self.input_size, initializer=tf.random_uniform_initializer(-0.1, 0.1))
+                    u_g = tf.get_variable("u_g", full_state_size, initializer=tf.random_uniform_initializer(-0.1, 0.1))
+                    g__i_j = tf.sigmoid(tf.matmul(inputs, w_g) + tf.matmul(full_state, u_g))
+
+                    # Accumulate sum
+                    h_t_1 = \
+                        tf.slice(
+                                full_state,
+                                [0, cur_state_pos],
+                                [-1, layer_size]
+                        )
+                    cur_state_pos += layer_size
+                    U = tf.get_variable("U", [self.input_size, self._num_units],
+                                        initializer=tf.random_uniform_initializer(-0.1, 0.1))
+                    b = tf.get_variable("b", self.state_size, initializer=tf.constant_initializer(1.))
+                    summation_term = tf.add(summation_term, g__i_j * tf.matmul(U, h_t_1) + b)
+
+        return summation_term
+
+
 class FeedbackCell(rnn_cell.MultiRNNCell):
     """
     MultiRNNCell composed of stacked cells that interact across layers
     Based on http://arxiv.org/pdf/1502.02367v4.pdf
     """
 
+    def __init__(self, cells):
+        self._layer_sizes = []
+        for cell in cells:
+            if not isinstance(cell, GFCell):
+                raise ValueError("Cells must be of type GFCell")
+            self.layer_sizes.append(cell.state_size)
+
+        super(FeedbackCell, self).__init__(cells)
+
+    @property
+    def layer_sizes(self):
+        return self._layer_sizes
+
     def __call__(self, inputs, state, scope=None):
         with tf.variable_scope(scope or type(self).__name__):
             # Conveniently the concatenation of all hidden states at t-1
-            h_star_t_prev = state
             cur_state_pos = 0
             cur_inp = inputs
             new_states = []
@@ -24,16 +102,8 @@ class FeedbackCell(rnn_cell.MultiRNNCell):
                 with tf.variable_scope("Cell%d" % i):
                     cur_state = array_ops.slice(
                             state, [0, cur_state_pos], [-1, cell.state_size])
-                    with tf.variable_scope("Global Reset"):
-                        u_g = tf.get_variable("u_g", [self.state_size],
-                                              initializer=tf.random_uniform_initializer(-0.1, 0.1))
-                        w_g = tf.get_variable("w_g", cell.state_size,
-                                              initializer=tf.random_uniform_initializer(-0.1, 0.1))
-                        g = tf.sigmoid(tf.reduce_sum(tf.mul(w_g, cur_inp)) + tf.reduce_sum(tf.mul(u_g, h_star_t_prev)))
-                        cur_state = tf.reduce_sum(g * cur_state)
-
                     cur_state_pos += cell.state_size
-                    cur_inp, new_state = cell(cur_inp, cur_state)
+                    cur_inp, new_state = cell(cur_inp, cur_state, state, self.layer_sizes)
                     new_states.append(new_state)
 
         return cur_inp, array_ops.concat(1, new_states)
