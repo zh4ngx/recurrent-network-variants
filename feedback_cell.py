@@ -29,7 +29,7 @@ class FeedbackCell(rnn_cell.MultiRNNCell):
                                               initializer=tf.random_uniform_initializer(-0.1, 0.1))
                         w_g = tf.get_variable("w_g", cell.state_size,
                                               initializer=tf.random_uniform_initializer(-0.1, 0.1))
-                        g = tf.sigmoid(tf.mul(w_g, cur_inp) + tf.mul(u_g, h_star_t_prev))
+                        g = tf.sigmoid(tf.reduce_sum(tf.mul(w_g, cur_inp)) + tf.reduce_sum(tf.mul(u_g, h_star_t_prev)))
                         cur_state = tf.reduce_sum(g * cur_state)
 
                     cur_state_pos += cell.state_size
