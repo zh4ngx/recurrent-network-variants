@@ -22,7 +22,6 @@ class LSTMNCell(object):
     def state_size(self):
         return 2 * self._num_units, self._memory_capacity
 
-
     def __call__(self, inputs, memory_tape, current_timestep, scope=None):
         """
         Recurrence functionality here
@@ -37,7 +36,7 @@ class LSTMNCell(object):
         """
         with tf.variable_scope(scope or type(self).__name__):
             c, h = tf.split(1, 2, memory_tape)
-            x_t = inputs
+            x = inputs
 
             with tf.variable_scope("attention"):
                 v = tf.get_variable("v", [self.output_size],
@@ -47,51 +46,40 @@ class LSTMNCell(object):
                 W_x = tf.get_variable("W_x", [self.input_size, self._num_units],
                                       initializer=tf.random_uniform_initializer(-0.1, 0.1))
                 W_h_c = tf.get_variable("W_h_c", [self.input_size, self._num_units],
-                                      initializer=tf.random_uniform_initializer(-0.1, 0.1))
+                                        initializer=tf.random_uniform_initializer(-0.1, 0.1))
+
+                # TODO: vectorize
                 for i in range(0, current_timestep):
                     with tf.variable_scope(i):
                         a = tf.matmul(
                             v,
                             tf.tanh(
-                                tf.matmul(W_h, memory_tape[:, :, i]) +
-                                tf.matmul(W_x, x_t) +
-                                tf.matmul(W_h_c, memory_tape[:, :, i]) # not correct
-                            )
+                                tf.matmul(W_h, h[:, :, i]) +
+                                tf.matmul(W_x, x) +
+                                tf.matmul(W_h_c, h[:, :, i])  # not correct
+                            ),
+                            name="a"
                         )
-                        s = tf.nn.softmax(a)
+                a = tf.concat(1, [tf.get_variable(str(i) + "/a") for i in range(0, current_timestep)])
 
-                h_i =
-                W_h =
-                a_i_t = tf.matmul()
-            with tf.variable_scope("Update Gate"):
-                W_z = tf.get_variable("W_z", [self.input_size, self._num_units],
-                                      initializer=tf.random_uniform_initializer(-0.1, 0.1))
-                U_z = tf.get_variable("U_z", [self.input_size, self._num_units],
-                                      initializer=tf.random_uniform_initializer(-0.1, 0.1))
-                b_z = tf.get_variable("b_z", [self._num_units], tf.constant_initializer(0.0))
+                # Attention Softmax
+                s = tf.nn.softmax(a)
 
-                z_t = tf.sigmoid(tf.matmul(x_t, W_z) + tf.matmul(h_t_prev, U_z) + b_z, name="z_t")
+            with tf.variable_scope("memory"):
+                # TODO: vectorize
+                for i in range(0, current_timestep):
+                    with tf.variable_scope(i):
+                        m = s[i] * memory_tape[:, :, i]
+                summation = tf.reduce_sum(tf.get_variable(str(i) + "/m") for i in range(0, current_timestep))
 
-            with tf.variable_scope("Reset Gate"):
-                W_r = tf.get_variable("W_r", [self.input_size, self._num_units],
-                                      initializer=tf.random_uniform_initializer(-0.1, 0.1))
-                U_r = tf.get_variable("U_r", [self.input_size, self._num_units],
-                                      initializer=tf.random_uniform_initializer(-0.1, 0.1))
-                b_r = tf.get_variable("b_r", [self._num_units], tf.constant_initializer(1.0))
+                h, c = tf.split(1, 2, summation)
 
-                r_t = tf.sigmoid(tf.matmul(x_t, W_r) + tf.matmul(h_t_prev, U_r) + b_r, name="r_t")
-
-            with tf.variable_scope("Candidate"):
-                # New memory content
+            with tf.variable_scope("Input Gate"):
                 W = tf.get_variable("W", [self.input_size, self._num_units],
                                     initializer=tf.random_uniform_initializer(-0.1, 0.1))
 
-                b = tf.get_variable("b", [self._num_units], tf.constant_initializer(0.0))
+            # TODO: FINISH i, f, o, m GATES - based on x_t and memory-adapted h
+            # TODO: FINISH final c output - based on gated c and memory-adapted c
+            # TODO: FINISH final h output - based on gated c output
 
-                summation_term = self.compute_feedback(x_t, full_state, layer_sizes)
-                hc_t = tf.tanh(tf.matmul(x_t, W) + tf.mul(r_t, summation_term))
-
-            with tf.Variable("Output"):
-                h_t = tf.mul(z_t, hc_t) + tf.mul((1 - z_t), h_t_prev)
-
-        return h_t, h_t
+        return h, c
