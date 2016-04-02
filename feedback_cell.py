@@ -73,24 +73,29 @@ class GFCell(object):
         return summation_term
 
 
-class FeedbackCell(rnn_cell.MultiRNNCell):
+class FeedbackCell(object):
     """
     MultiRNNCell composed of stacked cells that interact across layers
     Based on http://arxiv.org/pdf/1502.02367v4.pdf
     """
 
-    def __init__(self, cells):
-        self._layer_sizes = []
+    def __init__(self, num_units, cells):
+        self._num_units = num_units
+        self._cells = cells
         for cell in cells:
             if not isinstance(cell, GFCell):
                 raise ValueError("Cells must be of type GFCell")
-            self.layer_sizes.append(cell.state_size)
-
-        super(FeedbackCell, self).__init__(cells)
 
     @property
-    def layer_sizes(self):
-        return self._layer_sizes
+    def input_size(self):
+        return self._num_units
+
+    @property
+    def output_size(self):
+        return self._num_units
+
+    def state_size(self):
+        return self._num_units
 
     def __call__(self, inputs, hs_prev, state, scope=None):
         with tf.variable_scope(scope or type(self).__name__):
@@ -104,7 +109,7 @@ class FeedbackCell(rnn_cell.MultiRNNCell):
                     cur_state = array_ops.slice(
                             state, [0, cur_state_pos], [-1, cell.state_size])
                     cur_state_pos += cell.state_size
-                    cur_inp, new_state = cell(cur_inp, cur_state, hs_prev, self.layer_sizes)
+                    cur_inp, new_state = cell(cur_inp, cur_state, hs_prev, self.state_size)
                     new_states.append(new_state)
                     new_hs.append(cur_inp)
 
